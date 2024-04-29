@@ -1,0 +1,82 @@
+import numpy as np
+import pandas as pd
+import datetime as dt
+import yfinance as yf
+import matplotlib.pyplot as plt
+from scipy.stats import norm
+
+# Setting the time frame and initial parameters that can always be adjusted
+years = 10
+portfolio_value = 9000000
+days = 30
+
+# Calculating the start and end dates for the data collected from yahoo finance
+endDate = dt.datetime.now()
+startDate = endDate - dt.timedelta(days=365 * years)
+
+# Define the tickers for the stocks in the portfolio
+tickers = ['SPY', 'TLSA', 'AAPL', 'BTC-USD', 'AMZN']
+
+# Define equal weights for the portfolio, assuming an equal investment in each stock
+weights = np.array([1 / len(tickers)] * len(tickers))
+
+# Create an empty DataFrame to store the adjusted close price data
+adj_close_df = pd.DataFrame()
+
+# Download the adjusted close for each ticker and store it in the DataFrame
+for ticker in tickers:
+    data = yf.download(ticker, start=startDate, end=endDate)
+    adj_close_df[ticker] = data['Adj Close']
+
+# Calculate the log returns of the stocks
+log_returns = np.log(adj_close_df / adj_close_df.shift(1))
+log_returns = log_returns.dropna()
+
+# Calculate the weighted historical returns for the portfolio
+historical_returns = (log_returns * weights).sum(axis=1)
+
+# Calculate the cumulative returns over a rolling window of the specified number of days
+historical_x_day_returns = historical_returns.rolling(window=days).sum()
+
+# Calculate the covariance matrix and standard deviation (Volatility) using the log returns
+cov_matrix = log_returns.cov() * 252  # Annualize considering 252 trading days in a year 
+
+portfolio_std_dev = np.sqrt(weights.T @ cov_matrix @ weights)
+
+# Confidence levels for VaR calculation
+confidence_levels = [0.90, 0.95, 0.99]
+
+# Calculate the Value at Risk at the specified confidence levels
+VaRs = []
+for cl in confidence_levels:
+    VaR = portfolio_value * (norm.ppf(1 - cl) * portfolio_std_dev * np.sqrt(days / 252) - historical_returns.mean() * days)
+    VaRs.append(VaR)  
+
+# Print the VaR at different confidence levels
+print(f'{"Confidence Level":<20} {"Value at Risk":<20}')
+print('-' * 40)
+for cl, VaR in zip(confidence_levels, VaRs):
+    print(f'{cl * 100:>6.0f}%: {"":<8} ${VaR:>10,.2f}')
+
+# Convert the 30-day returns to dollar values for plotting
+historical_x_day_returns_dollar = historical_x_day_returns * portfolio_value
+
+# Plotting the histogram of the 30-day portfolio returns
+plt.hist(historical_x_day_returns_dollar, bins=50, density=True, alpha=0.5, color='green')
+
+# Add vertical lines representing VaR at each confidence level
+for cl, VaR in zip(confidence_levels, VaRs):
+    plt.axvline(x=VaR, linestyle='--', color='r', label=f'VaR at {int(cl * 100)}% Confidence')
+
+# Adjust the legend to the top right of the plot
+plt.legend(loc='upper right')
+
+# Label the x and y axes
+plt.xlabel(f'{days}-Day Portfolio Return (in $)')
+plt.ylabel('Frequency')
+
+# Title of the plot indicating the distribution of portfolio returns and VaR estimates
+plt.title(f'Portfolio Distribution and Parametric VaR Estimates for {days}-Days')
+
+# Display the plot
+plt.show()
